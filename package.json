@@ -5,8 +5,12 @@
     "packages/*"
   ],
   "scripts": {
+    "changeset": "changeset",
+    "changeset:status": "changeset status",
+    "version-packages": "changeset version",
     "ci:version": "changeset version && bun update",
-    "ci:publish": "for dir in packages/*; do (cd \"$dir\" && bun publish || true); done && changeset tag"
+    "ci:publish": "for dir in packages/*; do (cd \"$dir\" && bun publish || true); done && changeset tag",
+    "precommit": "changeset status --since=origin/main"
   },
   "type": "module",
   "devDependencies": {

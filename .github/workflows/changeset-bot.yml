@@ -1,0 +1,235 @@
+name: Auto Generate Changeset
+
+on:
+  pull_request:
+    types: [closed]
+    branches:
+      - main
+
+jobs:
+  generate-changeset:
+    if: github.event.pull_request.merged == true
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: main
+
+      - uses: oven-sh/setup-bun@v1
+
+      - name: Install dependencies
+        run: bun install
+
+      - name: Get merged PR info
+        id: pr-info
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const pr = context.payload.pull_request;
+
+            // Get all files changed in the PR
+            const { data: files } = await github.rest.pulls.listFiles({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: pr.number
+            });
+
+            // Get commits from the PR
+            const { data: commits } = await github.rest.pulls.listCommits({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: pr.number
+            });
+
+            // Analyze which packages changed
+            const packagesChanged = new Set();
+            files.forEach(file => {
+              const match = file.filename.match(/^packages\/([^\/]+)\//);
+              if (match) {
+                packagesChanged.add(`@try-changesets/${match[1]}`);
+              }
+            });
+
+            if (packagesChanged.size === 0) {
+              console.log('No package changes detected');
+              core.setOutput('skip', 'true');
+              return;
+            }
+
+            // Prepare data for AI
+            const commitMessages = commits.map(c => c.commit.message).join('\n');
+            const fileChanges = files.map(f => `${f.filename} (+${f.additions}/-${f.deletions})`).join('\n');
+
+            core.setOutput('skip', 'false');
+            core.setOutput('packages', JSON.stringify(Array.from(packagesChanged)));
+            core.setOutput('pr_title', pr.title);
+            core.setOutput('pr_body', pr.body || 'No description provided');
+            core.setOutput('commits', commitMessages);
+            core.setOutput('files', fileChanges);
+
+      - name: Generate changeset with AI
+        if: steps.pr-info.outputs.skip != 'true'
+        id: ai-changeset
+        uses: actions/github-script@v7
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          script: |
+            // Using GitHub Models API (free tier with gpt-4o-mini or similar)
+            const packages = JSON.parse('${{ steps.pr-info.outputs.packages }}');
+            const prTitle = `${{ steps.pr-info.outputs.pr_title }}`;
+            const prBody = `${{ steps.pr-info.outputs.pr_body }}`;
+            const commits = `${{ steps.pr-info.outputs.commits }}`;
+            const files = `${{ steps.pr-info.outputs.files }}`;
+
+            const prompt = `Analyze this merged PR and determine:
+            1. The appropriate semantic version bump type (major/minor/patch) for each package
+            2. A clear, concise changelog description
+
+            PR Title: ${prTitle}
+            PR Description: ${prBody}
+
+            Commit Messages:
+            ${commits}
+
+            Files Changed:
+            ${files}
+
+            Packages Affected: ${packages.join(', ')}
+
+            Rules:
+            - MAJOR: Breaking changes, API changes, removed features
+            - MINOR: New features, enhancements (backwards compatible)
+            - PATCH: Bug fixes, documentation, small improvements
+
+            Respond ONLY with valid JSON in this exact format:
+            {
+              "changesets": [
+                {
+                  "package": "@try-changesets/api",
+                  "type": "minor",
+                  "description": "Add user authentication endpoint"
+                }
+              ]
+            }`;
+
+            try {
+              // Using GitHub Models API (Azure OpenAI behind the scenes)
+              const response = await fetch('https://models.inference.ai.azure.com/chat/completions', {
+                method: 'POST',
+                headers: {
+                  'Content-Type': 'application/json',
+                  'Authorization': `Bearer ${process.env.GITHUB_TOKEN}`
+                },
+                body: JSON.stringify({
+                  messages: [
+                    {
+                      role: 'system',
+                      content: 'You are a semantic versioning expert. Analyze code changes and suggest appropriate version bumps.'
+                    },
+                    {
+                      role: 'user',
+                      content: prompt
+                    }
+                  ],
+                  model: 'gpt-4o-mini', // Free tier model
+                  temperature: 0.3,
+                  max_tokens: 500
+                })
+              });
+
+              if (!response.ok) {
+                throw new Error(`API call failed: ${response.status}`);
+              }
+
+              const data = await response.json();
+              const aiResponse = data.choices[0].message.content;
+              
+              // Extract JSON from response (in case AI adds markdown formatting)
+              const jsonMatch = aiResponse.match(/\{[\s\S]*\}/);
+              const result = JSON.parse(jsonMatch ? jsonMatch[0] : aiResponse);
+              
+              core.setOutput('changesets', JSON.stringify(result.changesets));
+              
+            } catch (error) {
+              console.error('AI generation failed, using fallback:', error);
+              
+              // Fallback: simple heuristic-based changeset
+              const changesets = packages.map(pkg => ({
+                package: pkg,
+                type: commits.toLowerCase().includes('breaking') ? 'major' :
+                      commits.toLowerCase().includes('feat') ? 'minor' : 'patch',
+                description: prTitle
+              }));
+              
+              core.setOutput('changesets', JSON.stringify(changesets));
+            }
+
+      - name: Create changeset files
+        if: steps.pr-info.outputs.skip != 'true'
+        run: |
+          CHANGESETS='${{ steps.ai-changeset.outputs.changesets }}'
+
+          # Generate random changeset filename
+          FILENAME=$(head /dev/urandom | tr -dc a-z | head -c 10)
+
+          # Parse changesets and create file
+          echo "$CHANGESETS" | bun run - << 'EOF'
+          const fs = require('fs');
+          const changesets = JSON.parse(await Bun.stdin.text());
+
+          // Group by bump type
+          const grouped = {};
+          changesets.forEach(cs => {
+            if (!grouped[cs.type]) grouped[cs.type] = [];
+            grouped[cs.type].push(cs);
+          });
+
+          // Create frontmatter
+          const frontmatter = changesets.map(cs => 
+            `"${cs.package}": ${cs.type}`
+          ).join('\n');
+
+          // Create description (combine all descriptions)
+          const description = changesets
+            .map(cs => `**${cs.package}**: ${cs.description}`)
+            .join('\n\n');
+
+          const filename = process.env.FILENAME || 'auto-generated';
+          const content = `---\n${frontmatter}\n---\n\n${description}\n`;
+
+          fs.writeFileSync(`.changeset/${filename}.md`, content);
+          console.log(`Created changeset: ${filename}.md`);
+          EOF
+
+      - name: Commit and push changeset
+        if: steps.pr-info.outputs.skip != 'true'
+        run: |
+          git config user.name "changeset-bot[bot]"
+          git config user.email "changeset-bot[bot]@users.noreply.github.com"
+          git add .changeset/*.md
+
+          if git diff --staged --quiet; then
+            echo "No changeset to commit"
+            exit 0
+          fi
+
+          git commit -m "chore: auto-generate changeset for PR #${{ github.event.pull_request.number }}"
+          git push origin main
+
+      - name: Comment on PR
+        if: steps.pr-info.outputs.skip != 'true'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.payload.pull_request.number,
+              body: '🤖 Changeset automatically generated and committed to main branch!'
+            });
