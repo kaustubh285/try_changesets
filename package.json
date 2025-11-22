@@ -1,0 +1,16 @@
+{
+  "name": "try_changesets",
+  "module": "index.ts",
+  "workspaces": [
+    "packages/*"
+  ],
+  "type": "module",
+  "private": true,
+  "devDependencies": {
+    "@changesets/cli": "^2.29.7",
+    "@types/bun": "latest"
+  },
+  "peerDependencies": {
+    "typescript": "^5"
+  }
+}
