@@ -1,5 +1,13 @@
 # @try-changesets/user-app
 
+## 1.1.0
+
+### Minor Changes
+
+- bad4fae: **@try-changesets/internal-dashboard**: Feature c implementation and feature B minor fix
+
+  **@try-changesets/user-app**: Feature c implementation and feature B minor fix
+
 ## 1.0.0
 
 ### Major Changes

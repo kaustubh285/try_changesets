@@ -1,5 +1,11 @@
 # @try-changesets/api
 
+## 2.1.0
+
+### Minor Changes
+
+- c8eda61: **@try-changesets/api**: Feature d
+
 ## 2.0.0
 
 ### Major Changes
