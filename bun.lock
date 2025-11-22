@@ -39,7 +39,7 @@
     },
     "packages/user-app": {
       "name": "@try-changesets/user-app",
-      "version": "0.1.0",
+      "version": "1.0.0",
       "dependencies": {
         "react": "^18.2.0",
         "react-dom": "^18.2.0",
