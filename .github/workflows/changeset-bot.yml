@@ -1,4 +1,4 @@
-name: Auto Generate Changeset
+name: Auto Changeset and Version
 
 on:
   pull_request:
@@ -7,10 +7,8 @@ on:
       - main
 
 jobs:
-  generate-changeset:
-    if: |
-      github.event.pull_request.merged == true &&
-      github.event.pull_request.user.login != 'changeset-bot[bot]'
+  changeset-and-version:
+    if: github.event.pull_request.merged == true
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -21,6 +19,7 @@ jobs:
         with:
           fetch-depth: 0
           ref: main
+          token: ${{ secrets.GITHUB_TOKEN }}
 
       - uses: oven-sh/setup-bun@v1
 
@@ -34,21 +33,18 @@ jobs:
           script: |
             const pr = context.payload.pull_request;
 
-            // Get all files changed in the PR
             const { data: files } = await github.rest.pulls.listFiles({
               owner: context.repo.owner,
               repo: context.repo.repo,
               pull_number: pr.number
             });
 
-            // Get commits from the PR
             const { data: commits } = await github.rest.pulls.listCommits({
               owner: context.repo.owner,
               repo: context.repo.repo,
               pull_number: pr.number
             });
 
-            // Analyze which packages changed
             const packagesChanged = new Set();
             files.forEach(file => {
               const match = file.filename.match(/^packages\/([^\/]+)\//);
@@ -63,7 +59,6 @@ jobs:
               return;
             }
 
-            // Prepare data for AI
             const commitMessages = commits.map(c => c.commit.message).join('\n');
             const fileChanges = files.map(f => `${f.filename} (+${f.additions}/-${f.deletions})`).join('\n');
 
@@ -82,7 +77,6 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           script: |
-            // Using GitHub Models API (free tier with gpt-4o-mini or similar)
             const packages = JSON.parse('${{ steps.pr-info.outputs.packages }}');
             const prTitle = `${{ steps.pr-info.outputs.pr_title }}`;
             const prBody = `${{ steps.pr-info.outputs.pr_body }}`;
@@ -121,7 +115,6 @@ jobs:
             }`;
 
             try {
-              // Using GitHub Models API (Azure OpenAI behind the scenes)
               const response = await fetch('https://models.inference.ai.azure.com/chat/completions', {
                 method: 'POST',
                 headers: {
@@ -139,7 +132,7 @@ jobs:
                       content: prompt
                     }
                   ],
-                  model: 'gpt-4o-mini', // Free tier model
+                  model: 'gpt-4o-mini',
                   temperature: 0.3,
                   max_tokens: 500
                 })
@@ -152,7 +145,6 @@ jobs:
               const data = await response.json();
               const aiResponse = data.choices[0].message.content;
               
-              // Extract JSON from response (in case AI adds markdown formatting)
               const jsonMatch = aiResponse.match(/\{[\s\S]*\}/);
               const result = JSON.parse(jsonMatch ? jsonMatch[0] : aiResponse);
               
@@ -161,7 +153,6 @@ jobs:
             } catch (error) {
               console.error('AI generation failed, using fallback:', error);
               
-              // Fallback: simple heuristic-based changeset
               const changesets = packages.map(pkg => ({
                 package: pkg,
                 type: commits.toLowerCase().includes('breaking') ? 'major' :
@@ -172,26 +163,22 @@ jobs:
               core.setOutput('changesets', JSON.stringify(changesets));
             }
 
-      - name: Create changeset files
+      - name: Create changeset file
         if: steps.pr-info.outputs.skip != 'true'
         env:
           CHANGESETS_JSON: ${{ steps.ai-changeset.outputs.changesets }}
         run: |
-          # Generate random changeset filename
           FILENAME=$(head /dev/urandom | tr -dc a-z | head -c 10)
 
-          # Create the changeset using a proper Node.js/Bun script file
           cat > /tmp/create-changeset.js << 'SCRIPT_EOF'
           const fs = require('fs');
 
           const changesets = JSON.parse(process.env.CHANGESETS_JSON);
 
-          // Create frontmatter
           const frontmatter = changesets.map(cs => 
             `"${cs.package}": ${cs.type}`
           ).join('\n');
 
-          // Create description (combine all descriptions)
           const description = changesets
             .map(cs => `**${cs.package}**: ${cs.description}`)
             .join('\n\n');
@@ -201,24 +188,28 @@ jobs:
 
           fs.writeFileSync(`.changeset/${filename}.md`, content);
           console.log(`Created changeset: ${filename}.md`);
-          console.log('Content:', content);
           SCRIPT_EOF
 
           FILENAME=$FILENAME bun run /tmp/create-changeset.js
 
-      - name: Commit and push changeset
+      - name: Version packages and commit
         if: steps.pr-info.outputs.skip != 'true'
         run: |
           git config user.name "changeset-bot[bot]"
           git config user.email "changeset-bot[bot]@users.noreply.github.com"
+
+          # Add the changeset
           git add .changeset/*.md
+          git commit -m "chore: add changeset for PR #${{ github.event.pull_request.number }}"
 
-          if git diff --staged --quiet; then
-            echo "No changeset to commit"
-            exit 0
-          fi
+          # Run version command to update package.json files
+          bun run version-packages
 
-          git commit -m "chore: auto-generate changeset for PR #${{ github.event.pull_request.number }}"
+          # Commit version changes
+          git add .
+          git commit -m "chore: version packages" || echo "No version changes"
+
+          # Push everything
           git push origin main
 
       - name: Comment on PR
@@ -230,5 +221,5 @@ jobs:
               owner: context.repo.owner,
               repo: context.repo.repo,
               issue_number: context.payload.pull_request.number,
-              body: '🤖 Changeset automatically generated and committed to main branch!'
+              body: '🤖 Changeset created and packages versioned automatically!'
             });
