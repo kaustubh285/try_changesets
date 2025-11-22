@@ -1,7 +1,6 @@
 {
-  "name": "internal-dashboard",
-  "private": true,
-  "version": "0.0.0",
+  "name": "@try-changesets/internal-dashboard",
+  "version": "1.0.0",
   "type": "module",
   "scripts": {
     "dev": "vite",

@@ -1,6 +1,6 @@
 {
-  "name": "api",
-  "version": "1.0.0",
+  "name": "@try-changesets/api",
+  "version": "1.1.0",
   "main": "dist/src/main",
   "scripts": {
     "build": "nest build",
@@ -11,5 +11,11 @@
   "keywords": [],
   "author": "",
   "license": "ISC",
-  "description": ""
+  "description": "",
+  "dependencies": {
+    "@nestjs/core": "^10.0.0",
+    "@nestjs/platform-express": "^10.0.0",
+    "reflect-metadata": "^0.1.13",
+    "rxjs": "^7.8.0"
+  }
 }

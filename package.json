@@ -4,13 +4,16 @@
   "workspaces": [
     "packages/*"
   ],
+  "scripts": {
+    "ci:version": "changeset version && bun update",
+    "ci:publish": "for dir in packages/*; do (cd \"$dir\" && bun publish || true); done && changeset tag"
+  },
   "type": "module",
-  "private": true,
   "devDependencies": {
     "@changesets/cli": "^2.29.7",
     "@types/bun": "latest"
   },
   "peerDependencies": {
-    "typescript": "^5"
+    "typescript": "^5.9.3"
   }
 }
