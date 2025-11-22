@@ -8,7 +8,9 @@ on:
 
 jobs:
   generate-changeset:
-    if: github.event.pull_request.merged == true
+    if: |
+      github.event.pull_request.merged == true &&
+      github.event.pull_request.user.login != 'changeset-bot[bot]'
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -172,23 +174,17 @@ jobs:
 
       - name: Create changeset files
         if: steps.pr-info.outputs.skip != 'true'
+        env:
+          CHANGESETS_JSON: ${{ steps.ai-changeset.outputs.changesets }}
         run: |
-          CHANGESETS='${{ steps.ai-changeset.outputs.changesets }}'
-
           # Generate random changeset filename
           FILENAME=$(head /dev/urandom | tr -dc a-z | head -c 10)
 
-          # Parse changesets and create file
-          echo "$CHANGESETS" | bun run - << 'EOF'
+          # Create the changeset using a proper Node.js/Bun script file
+          cat > /tmp/create-changeset.js << 'SCRIPT_EOF'
           const fs = require('fs');
-          const changesets = JSON.parse(await Bun.stdin.text());
 
-          // Group by bump type
-          const grouped = {};
-          changesets.forEach(cs => {
-            if (!grouped[cs.type]) grouped[cs.type] = [];
-            grouped[cs.type].push(cs);
-          });
+          const changesets = JSON.parse(process.env.CHANGESETS_JSON);
 
           // Create frontmatter
           const frontmatter = changesets.map(cs => 
@@ -205,7 +201,10 @@ jobs:
 
           fs.writeFileSync(`.changeset/${filename}.md`, content);
           console.log(`Created changeset: ${filename}.md`);
-          EOF
+          console.log('Content:', content);
+          SCRIPT_EOF
+
+          FILENAME=$FILENAME bun run /tmp/create-changeset.js
 
       - name: Commit and push changeset
         if: steps.pr-info.outputs.skip != 'true'
