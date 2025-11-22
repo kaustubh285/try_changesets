@@ -9,5 +9,7 @@ async function bootstrap() {
 
 
   console.log(`API server is running on: http://localhost:${await app.getUrl()}`);
+
+  console.log(`Feature D implemented in API server`);
 }
 bootstrap();
