@@ -1,5 +1,11 @@
 # @try-changesets/user-app
 
+## 1.2.0
+
+### Minor Changes
+
+- d6de162: **@try-changesets/user-app**: feat: revamp user app UI with new and improved layout
+
 ## 1.1.0
 
 ### Minor Changes
