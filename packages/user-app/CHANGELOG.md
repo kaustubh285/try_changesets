@@ -1,5 +1,11 @@
 # @try-changesets/user-app
 
+## 1.2.1
+
+### Patch Changes
+
+- 66027e4: **@try-changesets/user-app**: refactor: remove unused imports and clean up component structure
+
 ## 1.2.0
 
 ### Minor Changes
